@@ -4,14 +4,12 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"reflect"
 	"strconv"
-	"strings"
 
 	"content-service/internal/shared/middleware"
+	"content-service/internal/shared/validation"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
@@ -23,13 +21,13 @@ func NewHandler(service Service) *Handler {
 }
 
 type CreateArticleRequest struct {
-	Title   string `json:"title" binding:"required,min=1,max=255"`
-	Content string `json:"content" binding:"required,min=1"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 
 type UpdateArticleRequest struct {
-	Title   *string `json:"title" binding:"required_without=Content,min=1,max=255"`
-	Content *string `json:"content" binding:"required_without=Title,min=1"`
+	Title   *string `json:"title"`
+	Content *string `json:"content"`
 }
 
 func getID(c *gin.Context) (uint, error) {
@@ -40,46 +38,22 @@ func getID(c *gin.Context) (uint, error) {
 	return uint(id), nil
 }
 
-func normalizeValidationError(err error, req interface{}) []string {
-	var validationErrors validator.ValidationErrors
-	if !errors.As(err, &validationErrors) {
-		return []string{"validation failed"}
-	}
+var errorToStatus = map[error]int{
+	ErrNotFound:   http.StatusNotFound,
+	ErrForbidden:  http.StatusForbidden,
+	ErrValidation: http.StatusBadRequest,
+}
 
-	var errorsList []string
-	reqType := reflect.TypeOf(req)
-	if reqType.Kind() == reflect.Ptr {
-		reqType = reqType.Elem()
-	}
-
-	for _, fieldErr := range validationErrors {
-		jsonName := fieldErr.Field()
-
-		if field, found := reqType.FieldByName(fieldErr.StructField()); found {
-			if jsonTag := field.Tag.Get("json"); jsonTag != "" && jsonTag != "-" {
-				if commaIndex := strings.Index(jsonTag, ","); commaIndex > 0 {
-					jsonName = jsonTag[:commaIndex]
-				} else {
-					jsonName = jsonTag
-				}
-			}
+func (handler *Handler) handleError(c *gin.Context, err error) {
+	for target, status := range errorToStatus {
+		if errors.Is(err, target) {
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
 		}
-
-		var message string
-		switch fieldErr.Tag() {
-		case "required", "required_without":
-			message = jsonName + " is required"
-		case "min":
-			message = jsonName + " is too short"
-		case "max":
-			message = jsonName + " is too long"
-		default:
-			message = jsonName + " validation failed"
-		}
-		errorsList = append(errorsList, message)
 	}
 
-	return errorsList
+	log.Printf("internal error: %v", err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 }
 
 func (handler *Handler) CreateArticle(c *gin.Context) {
@@ -91,14 +65,14 @@ func (handler *Handler) CreateArticle(c *gin.Context) {
 
 	var req CreateArticleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"errors": normalizeValidationError(err, req)})
+		validationErrors := validation.NormalizeValidationErrors(err, req)
+		c.JSON(http.StatusBadRequest, gin.H{"errors": validationErrors})
 		return
 	}
 
 	article, err := handler.service.CreateArticle(userID, req.Title, req.Content)
 	if err != nil {
-		log.Printf("error creating article: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create article"})
+		handler.handleError(c, err)
 		return
 	}
 
@@ -114,12 +88,7 @@ func (handler *Handler) GetArticleByID(c *gin.Context) {
 
 	article, err := handler.service.GetArticleByID(id)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-			return
-		}
-		log.Printf("error getting article %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get article"})
+		handler.handleError(c, err)
 		return
 	}
 
@@ -127,14 +96,38 @@ func (handler *Handler) GetArticleByID(c *gin.Context) {
 }
 
 func (handler *Handler) GetAllArticles(c *gin.Context) {
-	articles, err := handler.service.GetAllArticles()
+	page := DefaultPage
+	limit := DefaultLimit
+
+	if pageStr := c.Query("page"); pageStr != "" {
+		if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+			page = p
+		}
+	}
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	articles, total, err := handler.service.GetAllArticles(page, limit)
 	if err != nil {
-		log.Printf("error getting articles: %v", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get articles"})
+		handler.handleError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, articles)
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": articles,
+		"meta": gin.H{
+			"page":        page,
+			"limit":       limit,
+			"total":       total,
+			"total_pages": totalPages,
+		},
+	})
 }
 
 func (handler *Handler) UpdateArticle(c *gin.Context) {
@@ -150,41 +143,21 @@ func (handler *Handler) UpdateArticle(c *gin.Context) {
 		return
 	}
 
-	article, err := handler.service.GetArticleByID(id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-			return
-		}
-		log.Printf("error getting article %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get article"})
-		return
-	}
-
-	if article.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "you can only update your own articles"})
-		return
-	}
-
 	var updateReq UpdateArticleRequest
 	if err := c.ShouldBindJSON(&updateReq); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"errors": normalizeValidationError(err, updateReq)})
+		validationErrors := validation.NormalizeValidationErrors(err, updateReq)
+		c.JSON(http.StatusBadRequest, gin.H{"errors": validationErrors})
 		return
 	}
 
 	if updateReq.Title == nil && updateReq.Content == nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "no fields to update"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "at least one field (title or content) must be provided"})
 		return
 	}
 
-	updatedArticle, err := handler.service.UpdateArticle(id, updateReq.Title, updateReq.Content)
+	updatedArticle, err := handler.service.UpdateArticle(userID, id, updateReq.Title, updateReq.Content)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-			return
-		}
-		log.Printf("error updating article %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update article"})
+		handler.handleError(c, err)
 		return
 	}
 
@@ -204,29 +177,8 @@ func (handler *Handler) DeleteArticle(c *gin.Context) {
 		return
 	}
 
-	article, err := handler.service.GetArticleByID(id)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-			return
-		}
-		log.Printf("error getting article %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get article"})
-		return
-	}
-
-	if article.UserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "you can only delete your own articles"})
-		return
-	}
-
-	if err := handler.service.DeleteArticle(id); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "article not found"})
-			return
-		}
-		log.Printf("error deleting article %d: %v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete article"})
+	if err := handler.service.DeleteArticle(userID, id); err != nil {
+		handler.handleError(c, err)
 		return
 	}
 

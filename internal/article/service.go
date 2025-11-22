@@ -7,9 +7,9 @@ import (
 type Service interface {
 	CreateArticle(userID uint, title, content string) (*Article, error)
 	GetArticleByID(id uint) (*Article, error)
-	GetAllArticles() ([]Article, error)
-	UpdateArticle(id uint, title, content *string) (*Article, error)
-	DeleteArticle(id uint) error
+	GetAllArticles(page, limit int) ([]Article, int64, error)
+	UpdateArticle(userID, id uint, title, content *string) (*Article, error)
+	DeleteArticle(userID, id uint) error
 }
 
 type articleService struct {
@@ -22,13 +22,16 @@ func NewService(repo Repository) Service {
 
 func (svc *articleService) CreateArticle(userID uint, title, content string) (*Article, error) {
 	if userID == 0 {
-		return nil, fmt.Errorf("user_id cannot be empty")
+		return nil, fmt.Errorf("%w: user_id cannot be empty", ErrValidation)
 	}
 	if title == "" {
-		return nil, fmt.Errorf("title cannot be empty")
+		return nil, fmt.Errorf("%w: title is required", ErrValidation)
+	}
+	if len(title) > MaxTitleLength {
+		return nil, fmt.Errorf("%w: title cannot exceed %d characters", ErrValidation, MaxTitleLength)
 	}
 	if content == "" {
-		return nil, fmt.Errorf("content cannot be empty")
+		return nil, fmt.Errorf("%w: content is required", ErrValidation)
 	}
 
 	article := &Article{
@@ -38,7 +41,7 @@ func (svc *articleService) CreateArticle(userID uint, title, content string) (*A
 	}
 
 	if err := svc.repo.Create(article); err != nil {
-		return nil, fmt.Errorf("failed to create article: %w", err)
+		return nil, fmt.Errorf("%w: failed to create article: %w", ErrInternal, err)
 	}
 
 	return article, nil
@@ -52,53 +55,76 @@ func (svc *articleService) GetArticleByID(id uint) (*Article, error) {
 	return article, nil
 }
 
-func (svc *articleService) GetAllArticles() ([]Article, error) {
-	articles, err := svc.repo.GetAll()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get articles: %w", err)
+func (svc *articleService) GetAllArticles(page, limit int) ([]Article, int64, error) {
+	if page < 1 {
+		page = DefaultPage
 	}
-	return articles, nil
+	if limit < 1 || limit > MaxLimit {
+		limit = DefaultLimit
+	}
+
+	articles, total, err := svc.repo.GetAll(page, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%w: failed to get articles: %w", ErrInternal, err)
+	}
+	return articles, total, nil
 }
 
-func (svc *articleService) UpdateArticle(id uint, title, content *string) (*Article, error) {
+func (svc *articleService) UpdateArticle(userID, id uint, title, content *string) (*Article, error) {
 	article, err := svc.repo.GetByID(id)
 	if err != nil {
 		return nil, err
 	}
 
+	if article.UserID != userID {
+		return nil, ErrForbidden
+	}
+
 	updates := make(map[string]interface{})
+
 	if title != nil {
 		if *title == "" {
-			return nil, fmt.Errorf("title cannot be empty")
+			return nil, fmt.Errorf("%w: title cannot be empty", ErrValidation)
 		}
-		if len(*title) > 255 {
-			return nil, fmt.Errorf("title cannot exceed 255 characters")
+		if len(*title) > MaxTitleLength {
+			return nil, fmt.Errorf("%w: title cannot exceed %d characters", ErrValidation, MaxTitleLength)
 		}
 		updates["title"] = *title
 		article.Title = *title
 	}
+
 	if content != nil {
 		if *content == "" {
-			return nil, fmt.Errorf("content cannot be empty")
+			return nil, fmt.Errorf("%w: content cannot be empty", ErrValidation)
 		}
 		updates["content"] = *content
 		article.Content = *content
 	}
 
 	if len(updates) == 0 {
-		return nil, fmt.Errorf("no fields to update")
+		return nil, fmt.Errorf("%w: no fields to update", ErrValidation)
 	}
 
 	if err := svc.repo.Update(id, updates); err != nil {
-		return nil, fmt.Errorf("failed to update article: %w", err)
+		return nil, fmt.Errorf("%w: failed to update article: %w", ErrInternal, err)
 	}
 
 	return article, nil
 }
 
-func (svc *articleService) DeleteArticle(id uint) error {
-	if err := svc.repo.Delete(id); err != nil {
+func (svc *articleService) DeleteArticle(userID, id uint) error {
+	article, err := svc.repo.GetByID(id)
+	if err != nil {
 		return err
 	}
+
+	if article.UserID != userID {
+		return ErrForbidden
+	}
+
+	if err := svc.repo.Delete(id); err != nil {
+		return fmt.Errorf("%w: failed to delete article: %w", ErrInternal, err)
+	}
+
 	return nil
 }

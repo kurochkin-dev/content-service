@@ -4,11 +4,17 @@ REST API application for managing articles, built with Go.
 
 ## Features
 
-- **CRUD operations** for articles
+- **CRUD operations** for articles with **pagination support**
 - **JWT authentication** with user identification
-- **PostgreSQL** database
+- **PostgreSQL** database with soft delete support
 - **Docker** support with docker-compose
 - **Database migrations** using SQL files
+- **Structured logging** with zerolog (JSON in production, pretty console in development)
+- **Graceful shutdown** for safe server termination
+- **CORS middleware** for cross-origin requests
+- **Rate limiting** to prevent abuse
+- **Health check endpoint** for monitoring
+- **Unit tests** for service layer
 
 ## Requirements
 
@@ -136,6 +142,20 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Base URL: `http://localhost:8080/api`
 
+### Health Check
+
+**GET** `/health`
+
+Check service health status.
+
+**Response:** `200 OK`
+```json
+{
+  "status": "ok",
+  "service": "content-service"
+}
+```
+
 ### Create Article
 
 **POST** `/articles`
@@ -170,20 +190,32 @@ Content-Type: application/json
 
 ### Get All Articles
 
-**GET** `/articles`
+**GET** `/articles?page=1&limit=10`
+
+Supports pagination with query parameters:
+- `page` - page number (default: 1)
+- `limit` - items per page (default: 10, max: 100)
 
 **Response:** `200 OK`
 ```json
-[
-  {
-    "id": 1,
-    "title": "Article Title",
-    "content": "Article content here",
-    "user_id": 123,
-    "created_at": "2024-01-01T12:00:00Z",
-    "updated_at": "2024-01-01T12:00:00Z"
+{
+  "data": [
+    {
+      "id": 1,
+      "title": "Article Title",
+      "content": "Article content here",
+      "user_id": 123,
+      "created_at": "2024-01-01T12:00:00Z",
+      "updated_at": "2024-01-01T12:00:00Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 10,
+    "total": 50,
+    "total_pages": 5
   }
-]
+}
 ```
 
 ### Get Article by ID
@@ -294,6 +326,20 @@ go run cmd/migrate/main.go -command version
 | `DB_SSLMODE` | SSL mode (disable, require, verify-ca, verify-full) | `disable` |
 | `JWT_SECRET` | JWT secret key (min 32 chars in production) | Auto-generated for dev |
 
+## Rate Limiting
+
+The API implements rate limiting to prevent abuse:
+- **Limit:** 100 requests per window
+- **Refill rate:** 10 tokens per second
+- **Response:** `429 Too Many Requests` when limit is exceeded
+
+**Example 429 Response:**
+```json
+{
+  "error": "rate limit exceeded, please try again later"
+}
+```
+
 ## Error Responses
 
 All errors follow this format:
@@ -330,6 +376,24 @@ Or for validation errors:
 }
 ```
 
+## Running Tests
+
+The project includes unit tests for the service layer.
+
+```bash
+# Run all tests
+go test ./...
+
+# Run tests with coverage
+go test -cover ./...
+
+# Run tests with verbose output
+go test -v ./...
+
+# Run tests in a specific package
+go test ./internal/article/...
+```
+
 ## Stopping Services
 
 ```bash
@@ -351,11 +415,48 @@ docker-compose down -v
 │   ├── server/           # Main application
 │   └── token/            # Token generator utility
 ├── internal/
-│   ├── article/          # Article domain (handler, service, repository)
-│   └── shared/           # Shared packages (config, database, middleware)
+│   ├── article/          # Article domain
+│   │   ├── constants.go  # Domain constants
+│   │   ├── errors.go     # Custom errors
+│   │   ├── handler.go    # HTTP handlers
+│   │   ├── model.go      # Data models
+│   │   ├── repository.go # Data access layer
+│   │   ├── service.go    # Business logic
+│   │   └── service_test.go # Unit tests
+│   └── shared/           # Shared packages
+│       ├── config/       # Configuration management
+│       ├── database/     # Database connection
+│       ├── logging/      # Structured logging
+│       ├── middleware/   # HTTP middlewares (auth, rate limiting)
+│       └── validation/   # Input validation
 ├── migrations/           # SQL migration files
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
 ```
+
+## Architecture & Design
+
+### Layered Architecture
+- **Handler Layer:** HTTP request/response handling
+- **Service Layer:** Business logic and validation
+- **Repository Layer:** Data access abstraction
+
+### Key Design Patterns
+- **Dependency Injection:** Services receive dependencies through constructors
+- **Repository Pattern:** Abstraction over database operations
+- **Middleware Pattern:** Cross-cutting concerns (auth, CORS, rate limiting)
+- **Error Wrapping:** Context-aware error handling with custom error types
+
+### Production-Ready Features
+- ✅ **Graceful Shutdown:** Safe server termination without dropping requests
+- ✅ **Structured Logging:** JSON logs in production, pretty console in development
+- ✅ **Request Validation:** Input validation with detailed error messages
+- ✅ **Pagination:** Efficient data retrieval for large datasets
+- ✅ **Rate Limiting:** Protection against abuse and DoS attacks
+- ✅ **Health Checks:** Easy service monitoring
+- ✅ **CORS Support:** Ready for frontend integration
+- ✅ **Soft Delete:** Data preservation with DeletedAt timestamps
+- ✅ **Connection Pooling:** Optimized database connections
+- ✅ **Unit Tests:** Service layer test coverage
 

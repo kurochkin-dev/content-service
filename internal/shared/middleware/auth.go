@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/rs/zerolog/log"
 )
 
 const UserIDKey = "user_id"
@@ -49,14 +49,14 @@ func JWTAuthMiddleware(cfg *config.Config) gin.HandlerFunc {
 		})
 
 		if err != nil {
-			log.Printf("error parsing JWT token: %v", err)
+			log.Warn().Err(err).Msg("Error parsing JWT token")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
 			c.Abort()
 			return
 		}
 
 		if claims.UserID == 0 {
-			log.Printf("user_id not found in JWT token")
+			log.Warn().Msg("user_id not found in JWT token")
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "user_id not found in token"})
 			c.Abort()
 			return
