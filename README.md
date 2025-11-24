@@ -324,7 +324,13 @@ go run cmd/migrate/main.go -command version
 | `DB_PASSWORD` | Database password | `postgres` |
 | `DB_NAME` | Database name | `content_db` |
 | `DB_SSLMODE` | SSL mode (disable, require, verify-ca, verify-full) | `disable` |
+| `DB_MAX_OPEN_CONNS` | Maximum number of open database connections | `25` |
+| `DB_MAX_IDLE_CONNS` | Maximum number of idle database connections | `5` |
+| `DB_CONN_MAX_LIFETIME_MIN` | Maximum connection lifetime in minutes | `5` |
+| `DB_CONN_MAX_IDLE_TIME_MIN` | Maximum connection idle time in minutes | `2` |
 | `JWT_SECRET` | JWT secret key (min 32 chars in production) | Auto-generated for dev |
+| `CORS_ALLOWED_ORIGIN` | Allowed CORS origin (e.g., `http://localhost:3000`) | `*` (dev), empty (prod) |
+| `AUTO_MIGRATE` | Enable/disable automatic database migrations (`true`/`false`) | `true` (dev), `false` (prod) |
 
 ## Rate Limiting
 
@@ -378,21 +384,42 @@ Or for validation errors:
 
 ## Running Tests
 
-The project includes unit tests for the service layer.
+The project includes unit tests for the service layer. Tests should be run **locally**, not inside the Docker container.
+
+**Why not in container?** The production Docker image uses multi-stage build and doesn't include Go toolchain. This keeps the image small (~20MB) and secure.
+
+### Run Tests Locally
 
 ```bash
 # Run all tests
 go test ./...
 
-# Run tests with coverage
-go test -cover ./...
-
 # Run tests with verbose output
-go test -v ./...
+go test ./... -v
+
+# Run tests with coverage report
+go test ./... -cover
 
 # Run tests in a specific package
 go test ./internal/article/...
+
+# Run tests with detailed coverage
+go test ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out
 ```
+
+### Expected Output
+
+```
+?       content-service/cmd/migrate     [no test files]
+?       content-service/cmd/server      [no test files]
+?       content-service/cmd/token       [no test files]
+ok      content-service/internal/article        0.587s
+?       content-service/internal/shared/config  [no test files]
+...
+```
+
+All tests should pass with `PASS` status.
 
 ## Stopping Services
 

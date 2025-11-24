@@ -41,7 +41,7 @@ func (svc *articleService) CreateArticle(userID uint, title, content string) (*A
 	}
 
 	if err := svc.repo.Create(article); err != nil {
-		return nil, fmt.Errorf("%w: failed to create article: %w", ErrInternal, err)
+		return nil, fmt.Errorf("failed to create article: %w", err)
 	}
 
 	return article, nil
@@ -65,7 +65,7 @@ func (svc *articleService) GetAllArticles(page, limit int) ([]Article, int64, er
 
 	articles, total, err := svc.repo.GetAll(page, limit)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w: failed to get articles: %w", ErrInternal, err)
+		return nil, 0, fmt.Errorf("failed to get articles: %w", err)
 	}
 	return articles, total, nil
 }
@@ -106,7 +106,7 @@ func (svc *articleService) UpdateArticle(userID, id uint, title, content *string
 	}
 
 	if err := svc.repo.Update(id, updates); err != nil {
-		return nil, fmt.Errorf("%w: failed to update article: %w", ErrInternal, err)
+		return nil, fmt.Errorf("failed to update article: %w", err)
 	}
 
 	return article, nil
@@ -123,7 +123,7 @@ func (svc *articleService) DeleteArticle(userID, id uint) error {
 	}
 
 	if err := svc.repo.Delete(id); err != nil {
-		return fmt.Errorf("%w: failed to delete article: %w", ErrInternal, err)
+		return fmt.Errorf("failed to delete article: %w", err)
 	}
 
 	return nil

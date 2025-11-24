@@ -2,7 +2,6 @@ package article
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -10,6 +9,7 @@ import (
 	"content-service/internal/shared/validation"
 
 	"github.com/gin-gonic/gin"
+	"github.com/rs/zerolog/log"
 )
 
 type Handler struct {
@@ -21,13 +21,13 @@ func NewHandler(service Service) *Handler {
 }
 
 type CreateArticleRequest struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Title   string `json:"title" validate:"required,min=1,max=255"`
+	Content string `json:"content" validate:"required,min=1"`
 }
 
 type UpdateArticleRequest struct {
-	Title   *string `json:"title"`
-	Content *string `json:"content"`
+	Title   *string `json:"title" validate:"omitempty,min=1,max=255"`
+	Content *string `json:"content" validate:"omitempty,min=1"`
 }
 
 func getID(c *gin.Context) (uint, error) {
@@ -52,7 +52,7 @@ func (handler *Handler) handleError(c *gin.Context, err error) {
 		}
 	}
 
-	log.Printf("internal error: %v", err)
+	log.Error().Err(err).Msg("Internal error")
 	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 }
 

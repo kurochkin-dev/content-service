@@ -32,10 +32,16 @@ services:
       - DB_PASSWORD=${DB_PASSWORD:-postgres}
       - DB_NAME=${DB_NAME:-content_db}
       - DB_SSLMODE=${DB_SSLMODE:-disable}
+      - DB_MAX_OPEN_CONNS=${DB_MAX_OPEN_CONNS:-25}
+      - DB_MAX_IDLE_CONNS=${DB_MAX_IDLE_CONNS:-5}
+      - DB_CONN_MAX_LIFETIME_MIN=${DB_CONN_MAX_LIFETIME_MIN:-5}
+      - DB_CONN_MAX_IDLE_TIME_MIN=${DB_CONN_MAX_IDLE_TIME_MIN:-2}
       - PORT=${PORT:-8080}
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - GIN_MODE=${GIN_MODE:-}
       - JWT_SECRET=${JWT_SECRET:-}
+      - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-}
+      - AUTO_MIGRATE=${AUTO_MIGRATE:-}
     depends_on:
       postgres:
         condition: service_healthy

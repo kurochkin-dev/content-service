@@ -1,16 +1,18 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"path/filepath"
 
 	"content-service/internal/shared/config"
+	"content-service/internal/shared/logging"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -20,13 +22,15 @@ func main() {
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Fatal().Err(err).Msg("Failed to load config")
 	}
+
+	logging.InitLogger(cfg.Environment)
 
 	migrationsPath := "file://./migrations"
 	migrationsAbsPath, err := filepath.Abs("./migrations")
 	if err != nil {
-		log.Fatalf("failed to get absolute path for migrations: %v", err)
+		log.Fatal().Err(err).Msg("Failed to get absolute path for migrations")
 	}
 	migrationsPath = fmt.Sprintf("file://%s", migrationsAbsPath)
 
@@ -41,54 +45,62 @@ func main() {
 
 	migrator, err := migrate.New(migrationsPath, dbURL)
 	if err != nil {
-		log.Fatalf("failed to create migrator: %v", err)
+		log.Fatal().Err(err).Msg("Failed to create migrator")
 	}
-	defer migrator.Close()
+	defer func() {
+		sourceErr, dbErr := migrator.Close()
+		if sourceErr != nil {
+			log.Error().Err(sourceErr).Msg("Failed to close migrator source")
+		}
+		if dbErr != nil {
+			log.Error().Err(dbErr).Msg("Failed to close migrator database")
+		}
+	}()
 
 	switch *command {
 	case "up":
 		if err := migrator.Up(); err != nil {
-			if err == migrate.ErrNoChange {
-				log.Println("No migrations to apply")
+			if errors.Is(err, migrate.ErrNoChange) {
+				log.Info().Msg("No migrations to apply")
 				return
 			}
-			log.Fatalf("failed to run migrations up: %v", err)
+			log.Fatal().Err(err).Msg("Failed to run migrations up")
 		}
 		version, dirty, _ := migrator.Version()
-		log.Printf("Migrations applied successfully. Current version: %d, dirty: %v", version, dirty)
+		log.Info().Uint("version", version).Bool("dirty", dirty).Msg("Migrations applied successfully")
 
 	case "down":
 		if err := migrator.Down(); err != nil {
-			if err == migrate.ErrNoChange {
-				log.Println("No migrations to rollback")
+			if errors.Is(err, migrate.ErrNoChange) {
+				log.Info().Msg("No migrations to rollback")
 				return
 			}
-			log.Fatalf("failed to run migrations down: %v", err)
+			log.Fatal().Err(err).Msg("Failed to run migrations down")
 		}
 		version, dirty, _ := migrator.Version()
-		log.Printf("Migrations rolled back successfully. Current version: %d, dirty: %v", version, dirty)
+		log.Info().Uint("version", version).Bool("dirty", dirty).Msg("Migrations rolled back successfully")
 
 	case "version":
 		version, dirty, err := migrator.Version()
 		if err != nil {
-			if err == migrate.ErrNilVersion {
-				log.Println("No migrations applied yet")
+			if errors.Is(err, migrate.ErrNilVersion) {
+				log.Info().Msg("No migrations applied yet")
 				return
 			}
-			log.Fatalf("failed to get version: %v", err)
+			log.Fatal().Err(err).Msg("Failed to get version")
 		}
-		log.Printf("Current migration version: %d, dirty: %v", version, dirty)
+		log.Info().Uint("version", version).Bool("dirty", dirty).Msg("Current migration version")
 
 	case "force":
 		if *versionFlag == 0 {
-			log.Fatal("version flag is required for force command")
+			log.Fatal().Msg("version flag is required for force command")
 		}
 		if err := migrator.Force(*versionFlag); err != nil {
-			log.Fatalf("failed to force version: %v", err)
+			log.Fatal().Err(err).Msg("Failed to force version")
 		}
-		log.Printf("Force version set to %d", *versionFlag)
+		log.Info().Int("version", *versionFlag).Msg("Force version set")
 
 	default:
-		log.Fatalf("unknown command: %s. Use: up, down, version, force", *command)
+		log.Fatal().Str("command", *command).Msg("Unknown command. Use: up, down, version, force")
 	}
 }

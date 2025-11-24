@@ -34,10 +34,22 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 
-	if err := db.AutoMigrate(&article.Article{}); err != nil {
-		log.Fatal().Err(err).Msg("Failed to run migrations")
+	autoMigrate := os.Getenv("AUTO_MIGRATE")
+	if autoMigrate == "" {
+		autoMigrate = "true"
+		if cfg.IsProduction() {
+			autoMigrate = "false"
+		}
 	}
-	log.Info().Msg("Database migrations completed")
+
+	if autoMigrate == "true" {
+		if err := db.AutoMigrate(&article.Article{}); err != nil {
+			log.Fatal().Err(err).Msg("Failed to run migrations")
+		}
+		log.Info().Msg("Database AutoMigrate completed")
+	} else {
+		log.Info().Msg("AutoMigrate disabled - use './migrate' command for schema changes")
+	}
 
 	gin.SetMode(cfg.App.GinMode)
 
@@ -48,21 +60,7 @@ func main() {
 	router := gin.Default()
 
 	router.Use(middleware.RateLimitMiddleware())
-
-	router.Use(func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-
-		c.Next()
-	})
+	router.Use(middleware.CORSMiddleware(cfg))
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -86,8 +84,11 @@ func main() {
 	addr := fmt.Sprintf(":%d", cfg.App.Port)
 
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: router,
+		Addr:         addr,
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	go func() {
@@ -107,6 +108,15 @@ func main() {
 
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatal().Err(err).Msg("Server forced to shutdown")
+	}
+
+	sqlDB, err := db.DB()
+	if err == nil {
+		if err := sqlDB.Close(); err != nil {
+			log.Error().Err(err).Msg("Error closing database connection")
+		} else {
+			log.Info().Msg("Database connection closed")
+		}
 	}
 
 	log.Info().Msg("Server exited gracefully")
